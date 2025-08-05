@@ -2,103 +2,141 @@ const axios = require('axios');
 const sql = require('mssql');
 
 // MSSQL DB Config – replace with your credentials
+require('dotenv').config();
+
 const dbConfig = {
-    user: 'testuser',
-    password: '1234',
-    server: 'localhost',
-    database: 'TenantDB',
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    server: process.env.DB_SERVER,
+    database: process.env.DB_DATABASE,
     options: {
-        encrypt: true,
-        trustServerCertificate: true,
+        encrypt: process.env.DB_ENCRYPT === 'true',
+        trustServerCertificate: process.env.DB_TRUST_SERVER_CERTIFICATE === 'true',
     },
 };
 
-// Fetch API details from the Tenants table based on tenantId, section, and apiName
-async function getApiDetails(tenantId, section, apiName) {
-    try {
-        const pool = await sql.connect(dbConfig);
-        const result = await pool
-            .request()
-            .input('tenantId', sql.VarChar, tenantId)
-            .query(`SELECT APIList FROM Tenants WHERE TenantID = @tenantId`);
 
-        if (!result.recordset.length) {
-            throw new Error(`Tenant ID '${tenantId}' not found in database.`);
-        }
+// Get API URL from TenantInfo table column matching apiName for given tenantId
+// Get HTTP method from api_details table
+async function getApiUrlAndMethod(tenantId, apiName) {
+  try {
+    const pool = await sql.connect(dbConfig);
 
-        const apiListStr = result.recordset[0].APIList;
-        const apiList = JSON.parse(apiListStr);
+    // Check tenant exists in TenantInfo
+    const tenantCheck = await pool.request()
+      .input('TenantID', sql.VarChar, tenantId)
+      .query('SELECT TenantID FROM TenantInfo WHERE TenantID = @TenantID');
 
-        if (!apiList[section]) {
-            throw new Error(`Section '${section}' not found for Tenant '${tenantId}'.`);
-        }
-
-        const apiEntry = apiList[section][apiName];
-        if (!apiEntry || !apiEntry.url || !apiEntry.method) {
-            throw new Error(`API '${apiName}' not found in section '${section}' for Tenant '${tenantId}'.`);
-        }
-
-        console.log(`✅ Resolved API from DB:`, apiEntry);
-        return apiEntry;
-    } catch (error) {
-        console.error("❌ DB/API Lookup Error:", error.message);
-        throw error;
+    if (tenantCheck.recordset.length === 0) {
+      throw new Error(`Tenant ID '${tenantId}' not found`);
     }
+
+    // Validate apiName in api_details table and get method
+    const apiDetailResult = await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .query('SELECT api_name, method FROM api_details WHERE api_name = @apiName');
+
+    if (apiDetailResult.recordset.length === 0) {
+      throw new Error(`API name '${apiName}' not found in api_details`);
+    }
+
+    const httpMethod = apiDetailResult.recordset[0].method.toUpperCase();
+
+    // Get URL from TenantInfo column for apiName (dynamic column)
+    // Use sp_executesql to safely query single column dynamically
+    const query = `
+      DECLARE @url NVARCHAR(500);
+      EXEC sp_executesql
+        N'SELECT @url = [' + @apiName + '] FROM TenantInfo WHERE TenantID = @tenantId',
+        N'@apiName NVARCHAR(100), @tenantId VARCHAR(100), @url NVARCHAR(500) OUTPUT',
+        @apiName = @apiName, @tenantId = @tenantId, @url = @url OUTPUT;
+      SELECT @url AS url;
+    `;
+
+    // Note: MSSQL package doesn't support output params easily,
+    // Use a workaround with dynamic SQL inside a string and separate query:
+
+    // Instead use simpler approach:
+    const urlResult = await pool.request()
+      .input('tenantId', sql.VarChar, tenantId)
+      .query(`SELECT [${apiName}] AS url FROM TenantInfo WHERE TenantID = @tenantId`);
+
+    if (urlResult.recordset.length === 0) {
+      throw new Error(`Tenant '${tenantId}' not found`);
+    }
+
+    const url = urlResult.recordset[0].url;
+    if (!url) {
+      throw new Error(`No URL configured for API '${apiName}' and Tenant '${tenantId}'`);
+    }
+
+    return { url, method: httpMethod };
+  } catch (error) {
+    console.error('DB/API Lookup Error:', error.message);
+    throw error;
+  }
 }
 
-// Replace :param placeholders in the URL with actual values from paramValues array
+// Replace :param placeholders in URL path with paramValues array entries
+// e.g., /api/user/:userId -> replace with value at paramValues[0]
 function replaceUrlParams(urlTemplate, paramValues) {
-    const urlObject = new URL(urlTemplate, 'http://dummy-base');
-    const path = urlObject.pathname;
+  const urlObj = new URL(urlTemplate, 'http://dummy');
+  const path = urlObj.pathname;
 
-    const paramPattern = /:([a-zA-Z0-9_]+)/g;
-    let index = 0;
+  const paramRegex = /:([a-zA-Z0-9_]+)/g;
+  let index = 0;
 
-    const newPath = path.replace(paramPattern, (_, paramName) => {
-        if (index >= paramValues.length) {
-            throw new Error(`Missing value for parameter: ${paramName}. Expected ${index + 1} param(s), got ${paramValues.length}`);
-        }
-        return encodeURIComponent(paramValues[index++]);
+  const newPath = path.replace(paramRegex, (match, paramName) => {
+    if (index >= paramValues.length) {
+      throw new Error(`Missing value for parameter: ${paramName}`);
+    }
+    return encodeURIComponent(paramValues[index++]);
+  });
+
+  if (index < paramValues.length) {
+    console.warn(`Extra parameter values provided but not used: ${paramValues.slice(index).join(', ')}`);
+  }
+
+  urlObj.pathname = newPath;
+  return urlObj.href.replace('http://dummy', '');
+}
+
+async function forwardRequest(req, res, method, tenantId, apiName, paramValues = [], query = {}, body = {}) {
+  try {
+    console.log('Proxy request:', { method, tenantId, apiName, paramValues, query });
+
+    const { url: urlTemplate, method: expectedMethod } = await getApiUrlAndMethod(tenantId, apiName);
+
+    // Use method passed or method from api_details? Prefer api_details method
+    if (method.toUpperCase() !== expectedMethod.toUpperCase()) {
+      // Log a warning; override method with expected
+      console.warn(`Warning: request method '${method}' overridden by API method '${expectedMethod}'`);
+      method = expectedMethod;
+    }
+
+    const resolvedUrl = replaceUrlParams(urlTemplate, paramValues);
+
+    console.log(`Forwarding to: ${resolvedUrl} with method ${method}`);
+
+    const response = await axios({
+      method: method.toLowerCase(),
+      url: resolvedUrl,
+      params: query,
+      data: body,
+      // If needed, forward headers / auth tokens etc. here
+      headers: {
+        // Add any headers here if necessary, e.g. auth from original request
+        // ...req.headers,
+      },
+      timeout: 10000,
     });
 
-    if (index < paramValues.length) {
-        console.warn(`⚠️ Extra param values provided (not used): ${paramValues.slice(index).join(", ")}`);
-    }
-
-    urlObject.pathname = newPath;
-    return urlObject.href.replace('http://dummy-base', '');
-}
-
-// Main forwarding function
-async function forwardRequest(req, res, method, tenantId, section, apiName, paramValues = [], query = {}, body = {}) {
-    try {
-        console.log("➡️ Proxy request details:", {
-            method,
-            tenantId,
-            section,
-            apiName,
-            paramValues,
-            query,
-            body
-        });
-
-        const apiDetails = await getApiDetails(tenantId, section, apiName);
-        const resolvedUrl = replaceUrlParams(apiDetails.url, paramValues);
-
-        console.log(`🌐 Forwarding to real backend URL: ${resolvedUrl}`);
-
-        const response = await axios({
-            method: apiDetails.method.toLowerCase(),
-            url: resolvedUrl,
-            params: query,
-            data: body,
-        });
-
-        res.status(response.status).json(response.data);
-    } catch (error) {
-        console.error("❌ Forwarding Error:", error.message);
-        res.status(500).json({ error: error.message });
-    }
+    res.status(response.status).json(response.data);
+  } catch (err) {
+    console.error('Forwarding Error:', err.message);
+    const status = err.response?.status || 500;
+    res.status(status).json({ error: err.message, details: err.response?.data || null });
+  }
 }
 
 module.exports = forwardRequest;

@@ -1,4 +1,4 @@
-const tenantService = require('../services/tenantService');
+const tenantService = require('../services/tenant.service');
 const { successResponse, errorResponse } = require('../utils/response');
 
 class TenantController {

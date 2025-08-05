@@ -1,18 +1,26 @@
-const proxyService = require('../services/proxyService');
+const proxyService = require('../services/proxy.service');
 
 class ProxyController {
   async handleProxy(req, res) {
     try {
-      const { method, tenantId, section, apiName } = req.params;
+      const { apiName } = req.params;
       const wildcardPath = req.params[0] || '';
       const paramValues = wildcardPath.split('/').filter(Boolean);
-      
+
+      // Extract tenantId and method from headers or body (as you prefer)
+      // Example: tenantId in 'x-tenant-id' header, method in 'x-method' header
+      const tenantId = req.headers['x-tenant-id'] || req.body.tenantId;
+      const method = req.headers['x-method'] || req.method;
+
+      if (!tenantId) {
+        return res.status(400).json({ error: 'Missing tenantId in headers or body' });
+      }
+
       await proxyService.handleProxyRequest(
         req,
         res,
         method,
         tenantId,
-        section,
         apiName,
         paramValues,
         req.query,

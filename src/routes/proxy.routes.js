@@ -1,9 +1,9 @@
 const express = require('express');
-const proxyController = require('../controllers/proxyController');
+const proxyController = require('../controllers/proxy.controller');
 
 const router = express.Router();
 
-// Universal proxy
-router.all('/api/proxy/:method/:tenantId/:section/:apiName/*', proxyController.handleProxy);
+// Single param apiName, all other info in headers/body
+router.all('/api/proxy/:apiName/*', proxyController.handleProxy);
 
 module.exports = router;

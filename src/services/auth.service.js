@@ -20,7 +20,7 @@ class AuthService {
     const tenantPool = getTenantDBPool();
     const tenantResult = await tenantPool.request()
       .input('Admin', sql.VarChar(50), empId)
-      .query('SELECT TenantID, Name FROM Tenants WHERE Admin = @Admin');
+      .query('SELECT TenantID, Name FROM Tenants WHERE Admin_ID = @Admin');
     
     if (tenantResult.recordset.length === 0) {
       throw new Error('You are not authorized as an admin for any tenant');
@@ -46,7 +46,7 @@ class AuthService {
     const result = await pool.request()
       .input('employee_ID', sql.VarChar, employee_ID)
       .input('password', sql.VarChar, password)
-      .query('SELECT TenantID, Admin, Password FROM Tenants WHERE Admin = @employee_ID AND Password = @password');
+      .query('SELECT TenantID, Admin_ID, Password FROM TenantInfo WHERE Admin_ID = @employee_ID AND Password = @password');
     
     if (result.recordset.length === 0) {
       throw new Error('Invalid credentials or not an admin');

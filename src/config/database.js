@@ -2,10 +2,10 @@ require('dotenv').config();
 const sql = require('mssql');
 
 const userDBConfig = {
-  user: process.env.USER_DB_USER || 'testuser',
-  password: process.env.USER_DB_PASSWORD || '1234',
-  server: process.env.USER_DB_SERVER || 'localhost',
-  database: process.env.USER_DB_NAME || 'UserDB',
+  user: process.env.USER_DB_USER ,
+  password: process.env.USER_DB_PASSWORD ,
+  server: process.env.USER_DB_SERVER ,
+  database: process.env.USER_DB_NAME,
   options: {
     encrypt: false,
     trustServerCertificate: true
@@ -18,10 +18,10 @@ const userDBConfig = {
 };
 
 const tenantDBConfig = {
-  user: process.env.TENANT_DB_USER || 'testuser',
-  password: process.env.TENANT_DB_PASSWORD || '1234',
-  server: process.env.TENANT_DB_SERVER || 'localhost',
-  database: process.env.TENANT_DB_NAME || 'TenantDB',
+  user: process.env.TENANT_DB_USER ,
+  password: process.env.TENANT_DB_PASSWORD ,
+  server: process.env.TENANT_DB_SERVER ,
+  database: process.env.TENANT_DB_NAME ,
   options: {
     encrypt: false,
     trustServerCertificate: true

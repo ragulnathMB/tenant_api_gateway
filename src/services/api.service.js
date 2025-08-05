@@ -2,112 +2,174 @@ const { getTenantDBPool, sql } = require('../config/database');
 const axios = require('axios');
 
 class ApiService {
+  // Retrieve all APIs and their URLs for a tenant by selecting dynamic columns in TenantInfo table
   async getTenantApis(tenantId) {
     const pool = getTenantDBPool();
+
+    // Get columns from TenantInfo related to APIs — get api_names from api_details table
+    const apisResult = await pool.request().query('SELECT api_name, method FROM api_details');
+    const apiColumns = apisResult.recordset.map(r => r.api_name);
+
+    if (apiColumns.length === 0) {
+      throw new Error('No APIs defined in api_details');
+    }
+
+    // Build dynamic SQL to get URLs for all APIs for tenant
+    const colsSelect = apiColumns.map(col => `[${col}]`).join(', ');
+
+    const query = `
+      SELECT TenantID, Name, ${colsSelect} 
+      FROM TenantInfo 
+      WHERE TenantID = @tenantId
+    `;
+
     const result = await pool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT APIList FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
+      .query(query);
+
     if (result.recordset.length === 0) {
       throw new Error('Tenant not found');
     }
-    
-    const apiListJson = result.recordset[0].APIList;
-    return JSON.parse(apiListJson || '{}');
+
+    const tenantRow = result.recordset[0];
+
+    // Build response mapping api_name: url or null if empty
+    const apis = {};
+    apiColumns.forEach(api => {
+      apis[api] = tenantRow[api] || null;
+    });
+
+    return {
+      tenantId: tenantRow.TenantID,
+      name: tenantRow.Name,
+      apis
+    };
   }
 
-  async updateApi(tenantId, section, apiName, updateData) {
-    const { url, method, newName } = updateData;
-    const pool = getTenantDBPool();
-    const result = await pool.request()
-      .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT APIList FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
-    if (result.recordset.length === 0) {
-      throw new Error('Tenant not found');
+  // Update URL of a specific API column in TenantInfo for a tenant
+  async updateApi(tenantId, apiName, updateData) {
+    const { url } = updateData;
+
+    if (!url) {
+      throw new Error('url is required for update');
     }
-    
-    const apiList = JSON.parse(result.recordset[0].APIList || '{}');
-    if (!apiList[section] || !apiList[section][apiName]) {
+
+    // Validate apiName exists in api_details
+    const pool = getTenantDBPool();
+
+    const apiExistsResult = await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .query('SELECT 1 FROM api_details WHERE api_name = @apiName');
+
+    if (apiExistsResult.recordset.length === 0) {
       throw new Error('API not found');
     }
-    
-    if (url) apiList[section][apiName].url = url;
-    if (method) apiList[section][apiName].method = method;
-    if (newName && newName !== apiName) {
-      apiList[section][newName] = apiList[section][apiName];
-      delete apiList[section][apiName];
-    }
-    
+
+    // Update TenantInfo table column corresponding to apiName with new url value
+    // SQL Server: dynamic column update requires dynamic SQL, so use sp_executesql
+
+    const updateQuery = `
+      DECLARE @sql NVARCHAR(MAX);
+      SET @sql = N'UPDATE TenantInfo SET [' + @apiName + '] = @url WHERE TenantID = @tenantId';
+      EXEC sp_executesql @sql, N'@url NVARCHAR(500), @tenantId VARCHAR(100)', @url = @url, @tenantId = @tenantId;
+    `;
+
     await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .input('url', sql.NVarChar(500), url)
       .input('tenantId', sql.VarChar, tenantId)
-      .input('apiList', sql.NVarChar(sql.MAX), JSON.stringify(apiList))
-      .query('UPDATE dbo.Tenants SET APIList = @apiList WHERE TenantID = @tenantId');
-    
-    return { message: 'API updated successfully' };
+      .query(updateQuery);
+
+    return { message: `API '${apiName}' updated successfully` };
   }
 
-  async addApi(tenantId, section, apiData) {
-    const { apiName, url, method } = apiData;
-    
-    if (!apiName || !url || !method) {
-      throw new Error('apiName, url, and method are required');
-    }
-    
-    const pool = getTenantDBPool();
-    const result = await pool.request()
-      .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT APIList FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
-    if (result.recordset.length === 0) {
-      throw new Error('Tenant not found');
-    }
-    
-    const apiList = JSON.parse(result.recordset[0].APIList || '{}');
-    if (!apiList[section]) {
-      apiList[section] = {};
-    }
-    
-    if (apiList[section][apiName]) {
-      throw new Error('API already exists');
-    }
-    
-    apiList[section][apiName] = { url, method };
-    
-    await pool.request()
-      .input('tenantId', sql.VarChar, tenantId)
-      .input('apiList', sql.NVarChar(sql.MAX), JSON.stringify(apiList))
-      .query('UPDATE dbo.Tenants SET APIList = @apiList WHERE TenantID = @tenantId');
-    
-    return { message: 'API added successfully' };
-  }
+  // Add new API URL for tenant into TenantInfo, similarly update column value
+  async addApi(tenantId, apiData) {
+    const { apiName, url } = apiData;
 
-  async deleteApi(tenantId, section, apiName) {
-    const pool = getTenantDBPool();
-    const result = await pool.request()
-      .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT APIList FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
-    if (result.recordset.length === 0) {
-      throw new Error('Tenant not found');
+    if (!apiName || !url) {
+      throw new Error('apiName and url are required');
     }
-    
-    const apiList = JSON.parse(result.recordset[0].APIList || '{}');
-    if (!apiList[section] || !apiList[section][apiName]) {
+
+    const pool = getTenantDBPool();
+
+    // Check apiName exists in api_details
+    const apiExists = await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .query('SELECT 1 FROM api_details WHERE api_name = @apiName');
+
+    if (apiExists.recordset.length === 0) {
       throw new Error('API not found');
     }
-    
-    delete apiList[section][apiName];
-    if (Object.keys(apiList[section]).length === 0) {
-      delete apiList[section];
-    }
-    
-    await pool.request()
+
+    // Check if tenant exists
+    const tenantResult = await pool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .input('apiList', sql.NVarChar(sql.MAX), JSON.stringify(apiList))
-      .query('UPDATE dbo.Tenants SET APIList = @apiList WHERE TenantID = @tenantId');
-    
-    return { message: 'API deleted successfully' };
+      .query('SELECT 1 FROM TenantInfo WHERE TenantID = @tenantId');
+
+    if (tenantResult.recordset.length === 0) {
+      throw new Error('Tenant not found');
+    }
+
+    // Check if URL already exists for this API for tenant (column has value)
+    const existingUrlResult = await pool.request()
+      .input('tenantId', sql.VarChar, tenantId)
+      .query(`SELECT [${apiName}] FROM TenantInfo WHERE TenantID = @tenantId`);
+
+    if (existingUrlResult.recordset.length > 0 && existingUrlResult.recordset[0][apiName]) {
+      throw new Error('API URL already exists for this tenant');
+    }
+
+    // Set the URL in TenantInfo column for tenant
+    const updateQuery = `
+      DECLARE @sql NVARCHAR(MAX);
+      SET @sql = N'UPDATE TenantInfo SET [' + @apiName + '] = @url WHERE TenantID = @tenantId';
+      EXEC sp_executesql @sql, N'@url NVARCHAR(500), @tenantId VARCHAR(100)', @url = @url, @tenantId = @tenantId;
+    `;
+
+    await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .input('url', sql.NVarChar(500), url)
+      .input('tenantId', sql.VarChar, tenantId)
+      .query(updateQuery);
+
+    return { message: `API URL added successfully for '${apiName}'` };
+  }
+
+  async deleteApi(tenantId, apiName) {
+    const pool = getTenantDBPool();
+
+    // Validate API exists
+    const apiExists = await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .query('SELECT 1 FROM api_details WHERE api_name = @apiName');
+
+    if (apiExists.recordset.length === 0) {
+      throw new Error('API not found');
+    }
+
+    // Validate tenant exists
+    const tenantExists = await pool.request()
+      .input('tenantId', sql.VarChar, tenantId)
+      .query('SELECT 1 FROM TenantInfo WHERE TenantID = @tenantId');
+
+    if (tenantExists.recordset.length === 0) {
+      throw new Error('Tenant not found');
+    }
+
+    // Delete API: update column to NULL in TenantInfo
+    const deleteQuery = `
+      DECLARE @sql NVARCHAR(MAX);
+      SET @sql = N'UPDATE TenantInfo SET [' + @apiName + '] = NULL WHERE TenantID = @tenantId';
+      EXEC sp_executesql @sql, N'@tenantId VARCHAR(100)', @tenantId = @tenantId;
+    `;
+
+    await pool.request()
+      .input('apiName', sql.NVarChar, apiName)
+      .input('tenantId', sql.VarChar, tenantId)
+      .query(deleteQuery);
+
+    return { message: `API URL deleted successfully for '${apiName}'` };
   }
 
   async testApi(url) {
@@ -122,7 +184,7 @@ class ApiService {
         working: true,
         statusCode: response.status,
         statusText: response.statusText,
-        headers: response.headers
+        headers: response.headers,
       };
     } catch (err) {
       return {
@@ -130,7 +192,7 @@ class ApiService {
         statusCode: err.response?.status || null,
         statusText: err.response?.statusText || null,
         message: err.message,
-        error: err.response?.data || null
+        error: err.response?.data || null,
       };
     }
   }

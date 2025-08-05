@@ -2,8 +2,18 @@ const { getUserDBPool, getTenantDBPool, sql } = require('../config/database');
 
 class TenantService {
   async createTenant(tenantData) {
-    const { TenantID, Name, LicenseCount = 0, APIList = {}, LicenseType = null, EnabledUsersCount = 0, DisabledUsersCount = 0, LicenseExpiry = null } = tenantData;
-    
+    const {
+      TenantID,
+      Name,
+      Licence_Count = 0,
+      License_Type = null,
+      Enabled_Users_Count = 0,
+      Disabled_Users_Count = 0,
+      License_Expiry = null,
+      Admin_ID = null,
+      Password = null,
+    } = tenantData;
+
     if (!TenantID || !Name) {
       throw new Error('TenantID and Name are required');
     }
@@ -11,18 +21,21 @@ class TenantService {
     const pool = getTenantDBPool();
     await pool.request()
       .input('TenantID', sql.VarChar(50), TenantID)
-      .input('Name', sql.VarChar(100), Name)
-      .input('LicenseCount', sql.Int, LicenseCount)
-      .input('APIList', sql.NVarChar(sql.MAX), JSON.stringify(APIList))
-      .input('LicenseType', sql.VarChar(50), LicenseType)
-      .input('EnabledUsersCount', sql.Int, EnabledUsersCount)
-      .input('DisabledUsersCount', sql.Int, DisabledUsersCount)
-      .input('LicenseExpiry', sql.DateTime, LicenseExpiry)
+      .input('Name', sql.NVarChar(200), Name)
+      .input('Licence_Count', sql.Int, Licence_Count)
+      .input('License_Type', sql.VarChar(100), License_Type)
+      .input('Enabled_Users_Count', sql.Int, Enabled_Users_Count)
+      .input('Disabled_Users_Count', sql.Int, Disabled_Users_Count)
+      .input('License_Expiry', sql.Date, License_Expiry)
+      .input('Admin_ID', sql.VarChar(100), Admin_ID)
+      .input('Password', sql.NVarChar(512), Password)
       .query(`
-        INSERT INTO dbo.Tenants (TenantID, Name, LicenseCount, APIList, LicenseType, EnabledUsersCount, DisabledUsersCount, LicenseExpiry)
-        VALUES (@TenantID, @Name, @LicenseCount, @APIList, @LicenseType, @EnabledUsersCount, @DisabledUsersCount, @LicenseExpiry)
+        INSERT INTO dbo.TenantInfo 
+          (TenantID, Name, Licence_Count, License_Type, Enabled_Users_Count, Disabled_Users_Count, License_Expiry, Admin_ID, Password)
+        VALUES 
+          (@TenantID, @Name, @Licence_Count, @License_Type, @Enabled_Users_Count, @Disabled_Users_Count, @License_Expiry, @Admin_ID, @Password)
       `);
-    
+
     return { message: 'Tenant created successfully' };
   }
 
@@ -30,22 +43,23 @@ class TenantService {
     const pool = getTenantDBPool();
     const result = await pool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT * FROM Tenants WHERE TenantID = @tenantId');
-    
+      .query('SELECT * FROM dbo.TenantInfo WHERE TenantID = @tenantId');
+
     if (result.recordset.length === 0) {
       throw new Error('Tenant not found');
     }
-    
+
     const tenant = result.recordset[0];
     return {
       TenantID: tenant.TenantID,
       Name: tenant.Name,
-      LicenseCount: tenant.LicenseCount,
-      APIList: tenant.APIList ? JSON.parse(tenant.APIList) : {},
-      LicenseType: tenant.LicenseType,
-      EnabledUsersCount: tenant.EnabledUsersCount,
-      DisabledUsersCount: tenant.DisabledUsersCount,
-      LicenseExpiry: tenant.LicenseExpiry
+      Licence_Count: tenant.Licence_Count,
+      License_Type: tenant.License_Type,
+      Enabled_Users_Count: tenant.Enabled_Users_Count,
+      Disabled_Users_Count: tenant.Disabled_Users_Count,
+      License_Expiry: tenant.License_Expiry,
+      Admin_ID: tenant.Admin_ID,
+      Password: tenant.Password
     };
   }
 
@@ -54,21 +68,21 @@ class TenantService {
     const userPool = getUserDBPool();
 
     // Get all tenants
-    const result = await tenantPool.request().query('SELECT * FROM dbo.Tenants');
+    const result = await tenantPool.request().query('SELECT * FROM dbo.TenantInfo');
     const tenants = result.recordset;
 
-    // Get enabled/disabled users count grouped by TenentID
+    // Get enabled/disabled users count grouped by TenantID
     const userCountResult = await userPool.request().query(`
-      SELECT TenentID, Status, COUNT(*) AS Count
+      SELECT TenantID, Status, COUNT(*) AS Count
       FROM dbo.Users
-      GROUP BY TenentID, Status
+      GROUP BY TenantID, Status
     `);
 
     // Organize counts into a map
     const countsMap = {};
     userCountResult.recordset.forEach(row => {
-      const tenantId = row.TenentID;
-      const status = row.Status?.toLowerCase();
+      const tenantId = row.TenantID;
+      const status = (row.Status || '').toLowerCase();
       const count = row.Count || 0;
 
       if (!countsMap[tenantId]) {
@@ -86,53 +100,73 @@ class TenantService {
     return tenants.map(row => ({
       TenantID: row.TenantID,
       Name: row.Name,
-      LicenseCount: row.LicenseCount,
-      APIList: row.APIList ? JSON.parse(row.APIList) : {},
-      LicenseType: row.LicenseType,
-      EnabledUsersCount: countsMap[row.TenantID]?.enabled || 0,
-      DisabledUsersCount: countsMap[row.TenantID]?.disabled || 0,
-      LicenseExpiry: row.LicenseExpiry
+      Licence_Count: row.Licence_Count,
+      License_Type: row.License_Type,
+      Enabled_Users_Count: countsMap[row.TenantID]?.enabled || 0,
+      Disabled_Users_Count: countsMap[row.TenantID]?.disabled || 0,
+      License_Expiry: row.License_Expiry,
+      Admin_ID: row.Admin_ID
     }));
   }
 
   async updateTenantInfo(tenantId, updateData) {
-    const { name, licenseCount, licenseType, enabledUsersCount, disabledUsersCount, licenseExpiry } = updateData;
+    const {
+      Name,
+      Licence_Count,
+      License_Type,
+      Enabled_Users_Count,
+      Disabled_Users_Count,
+      License_Expiry,
+      Admin_ID,
+      Password,
+    } = updateData;
+
     const pool = getTenantDBPool();
-    let updateFields = [];
+
+    const updateFields = [];
     let request = pool.request().input('tenantId', sql.VarChar, tenantId);
-    
-    if (name !== undefined) {
-      updateFields.push('Name = @name');
-      request.input('name', sql.VarChar, name);
+
+    if (Name !== undefined) {
+      updateFields.push('Name = @Name');
+      request.input('Name', sql.NVarChar(200), Name);
     }
-    if (licenseCount !== undefined) {
-      updateFields.push('LicenseCount = @licenseCount');
-      request.input('licenseCount', sql.Int, licenseCount);
+    if (Licence_Count !== undefined) {
+      updateFields.push('Licence_Count = @Licence_Count');
+      request.input('Licence_Count', sql.Int, Licence_Count);
     }
-    if (licenseType !== undefined) {
-      updateFields.push('LicenseType = @licenseType');
-      request.input('licenseType', sql.VarChar, licenseType);
+    if (License_Type !== undefined) {
+      updateFields.push('License_Type = @License_Type');
+      request.input('License_Type', sql.VarChar(100), License_Type);
     }
-    if (enabledUsersCount !== undefined) {
-      updateFields.push('EnabledUsersCount = @enabledUsersCount');
-      request.input('enabledUsersCount', sql.Int, enabledUsersCount);
+    if (Enabled_Users_Count !== undefined) {
+      updateFields.push('Enabled_Users_Count = @Enabled_Users_Count');
+      request.input('Enabled_Users_Count', sql.Int, Enabled_Users_Count);
     }
-    if (disabledUsersCount !== undefined) {
-      updateFields.push('DisabledUsersCount = @disabledUsersCount');
-      request.input('disabledUsersCount', sql.Int, disabledUsersCount);
+    if (Disabled_Users_Count !== undefined) {
+      updateFields.push('Disabled_Users_Count = @Disabled_Users_Count');
+      request.input('Disabled_Users_Count', sql.Int, Disabled_Users_Count);
     }
-    if (licenseExpiry !== undefined) {
-      updateFields.push('LicenseExpiry = @licenseExpiry');
-      request.input('licenseExpiry', sql.DateTime, licenseExpiry);
+    if (License_Expiry !== undefined) {
+      updateFields.push('License_Expiry = @License_Expiry');
+      request.input('License_Expiry', sql.Date, License_Expiry);
     }
-    
+    if (Admin_ID !== undefined) {
+      updateFields.push('Admin_ID = @Admin_ID');
+      request.input('Admin_ID', sql.VarChar(100), Admin_ID);
+    }
+    if (Password !== undefined) {
+      updateFields.push('Password = @Password');
+      request.input('Password', sql.NVarChar(512), Password);
+    }
+
     if (updateFields.length === 0) {
       throw new Error('No fields to update');
     }
-    
-    const query = `UPDATE dbo.Tenants SET ${updateFields.join(', ')} WHERE TenantID = @tenantId`;
+
+    const query = `UPDATE dbo.TenantInfo SET ${updateFields.join(', ')} WHERE TenantID = @tenantId`;
+
     await request.query(query);
-    return { message: 'Tenant info updated' };
+    return { message: 'Tenant info updated successfully' };
   }
 
   async updateLicenseCounts(tenantId, enabledUsersCount, disabledUsersCount) {
@@ -141,34 +175,35 @@ class TenantService {
       .input('tenantId', sql.VarChar, tenantId)
       .input('enabledUsersCount', sql.Int, enabledUsersCount)
       .input('disabledUsersCount', sql.Int, disabledUsersCount)
-      .query(`UPDATE dbo.Tenants 
-              SET EnabledUsersCount = @enabledUsersCount, 
-                  DisabledUsersCount = @disabledUsersCount 
-              WHERE TenantID = @tenantId`);
-    
-    return { message: 'License counts updated' };
+      .query(`
+        UPDATE dbo.TenantInfo 
+        SET Enabled_Users_Count = @enabledUsersCount, Disabled_Users_Count = @disabledUsersCount 
+        WHERE TenantID = @tenantId
+      `);
+
+    return { message: 'License counts updated successfully' };
   }
 
   async updateLicenseExpiry(tenantId, licenseExpiry) {
     const pool = getTenantDBPool();
     await pool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .input('licenseExpiry', sql.DateTime, licenseExpiry)
-      .query('UPDATE dbo.Tenants SET LicenseExpiry = @licenseExpiry WHERE TenantID = @tenantId');
-    
-    return { message: 'License expiry updated' };
+      .input('licenseExpiry', sql.Date, licenseExpiry)
+      .query('UPDATE dbo.TenantInfo SET License_Expiry = @licenseExpiry WHERE TenantID = @tenantId');
+
+    return { message: 'License expiry updated successfully' };
   }
 
   async deleteTenant(tenantId) {
     const pool = getTenantDBPool();
     const result = await pool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .query('DELETE FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
+      .query('DELETE FROM dbo.TenantInfo WHERE TenantID = @tenantId');
+
     if (result.rowsAffected[0] === 0) {
       throw new Error('Tenant not found');
     }
-    
+
     return { message: 'Tenant deleted successfully' };
   }
 
@@ -181,9 +216,9 @@ class TenantService {
     for (const id of tenantIds) {
       await pool.request()
         .input('tenantId', sql.VarChar, id)
-        .query('DELETE FROM Tenants WHERE TenantID = @tenantId');
+        .query('DELETE FROM dbo.TenantInfo WHERE TenantID = @tenantId');
     }
-    
+
     return { message: 'Tenants deleted successfully' };
   }
 
@@ -191,38 +226,38 @@ class TenantService {
     const tenantPool = getTenantDBPool();
     const tenantResult = await tenantPool.request()
       .input('tenantId', sql.VarChar, tenantId)
-      .query('SELECT * FROM dbo.Tenants WHERE TenantID = @tenantId');
-    
+      .query('SELECT * FROM dbo.TenantInfo WHERE TenantID = @tenantId');
+
     if (tenantResult.recordset.length === 0) {
       throw new Error('Tenant not found');
     }
-    
+
     const userPool = getUserDBPool();
     const userResult = await userPool.request()
       .input('tenantId', sql.VarChar, tenantId)
       .query(`
         SELECT 
-          COUNT(*) as TotalUsers,
-          SUM(CASE WHEN Status = 'Enabled' THEN 1 ELSE 0 END) as EnabledUsers,
-          SUM(CASE WHEN Status = 'Disabled' THEN 1 ELSE 0 END) as DisabledUsers
+          COUNT(*) AS TotalUsers,
+          SUM(CASE WHEN Status = 'Enabled' THEN 1 ELSE 0 END) AS EnabledUsers,
+          SUM(CASE WHEN Status = 'Disabled' THEN 1 ELSE 0 END) AS DisabledUsers
         FROM Users 
         WHERE TenantID = @tenantId
       `);
-    
+
     const tenant = tenantResult.recordset[0];
     const userStats = userResult.recordset[0];
-    
+
     return {
       TenantID: tenant.TenantID,
       Name: tenant.Name,
-      LicenseCount: tenant.LicenseCount,
-      LicenseType: tenant.LicenseType,
-      LicenseExpiry: tenant.LicenseExpiry,
+      Licence_Count: tenant.Licence_Count,
+      License_Type: tenant.License_Type,
+      License_Expiry: tenant.License_Expiry,
       TotalUsers: userStats.TotalUsers,
       EnabledUsers: userStats.EnabledUsers,
       DisabledUsers: userStats.DisabledUsers,
-      AvailableLicenses: tenant.LicenseCount - userStats.EnabledUsers,
-      APICount: tenant.APIList ? Object.keys(JSON.parse(tenant.APIList)).length : 0
+      AvailableLicenses: tenant.Licence_Count - (userStats.EnabledUsers || 0),
+      Admin_ID: tenant.Admin_ID
     };
   }
 }

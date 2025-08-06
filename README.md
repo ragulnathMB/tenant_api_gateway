@@ -176,23 +176,5 @@ src/
 
 Logs are managed via Winston and stored in `logs/`.
 
-## Testing
 
-```bash
-npm test
-```
-
-## Linting
-
-```bash
-npm run lint
-```
-
-## Contributing
-
-Contributions are welcome! Please open issues or PRs.
-
-## License
-
-MIT License
 

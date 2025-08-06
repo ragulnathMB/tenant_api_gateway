@@ -1,10 +1,11 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const sql = require('mssql');
 
 const userDBConfig = {
   user: process.env.USER_DB_USER ,
   password: process.env.USER_DB_PASSWORD ,
-  server: process.env.USER_DB_SERVER ,
+  server: process.env.USER_DB_SERVER || 'localhost',
   database: process.env.USER_DB_NAME,
   options: {
     encrypt: false,
@@ -20,7 +21,7 @@ const userDBConfig = {
 const tenantDBConfig = {
   user: process.env.TENANT_DB_USER ,
   password: process.env.TENANT_DB_PASSWORD ,
-  server: process.env.TENANT_DB_SERVER ,
+  server: process.env.TENANT_DB_SERVER || 'localhost',
   database: process.env.TENANT_DB_NAME ,
   options: {
     encrypt: false,

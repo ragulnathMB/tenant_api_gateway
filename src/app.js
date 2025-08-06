@@ -4,13 +4,13 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 
 // Routes
-const authRoutes = require('./routes/authRoutes');
-const tenantRoutes = require('./routes/tenantRoutes');
-const apiRoutes = require('./routes/apiRoutes');
-const proxyRoutes = require('./routes/proxyRoutes');
+const authRoutes = require('./routes/auth.routes');
+const tenantRoutes = require('./routes/tenant.routes');
+const apiRoutes = require('./routes/api.routes');
+const proxyRoutes = require('./routes/proxy.routes');
 
 // Middleware
-const errorHandler = require('./middleware/errorHandler');
+const errorHandler = require('./middleware/error_handler');
 const { initializeDatabase } = require('./config/database');
 
 const app = express();

@@ -1,5 +1,5 @@
 const express = require('express');
-const tenantController = require('../controllers/tenantController');
+const tenantController = require('../controllers/tenant.controller');
 const { validateTenantCreation, validateTenantUpdate } = require('../middleware/validation');
 
 const router = express.Router();

@@ -1,5 +1,5 @@
-const { app, initializeApp } = require('./src/app');
-const { closeDatabases } = require('./src/config/database');
+const { app, initializeApp } = require('./app');
+const { closeDatabases } = require('./config/database');
 
 const PORT = process.env.PORT || 3003;
 

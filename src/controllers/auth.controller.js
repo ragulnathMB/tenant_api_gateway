@@ -1,4 +1,4 @@
-const authService = require('../services/authService');
+const authService = require('../services/auth.service');
 const { successResponse, errorResponse } = require('../utils/response');
 
 class AuthController {

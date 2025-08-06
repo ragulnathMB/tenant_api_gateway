@@ -73,9 +73,9 @@ class TenantService {
 
     // Get enabled/disabled users count grouped by TenantID
     const userCountResult = await userPool.request().query(`
-      SELECT TenantID, Status, COUNT(*) AS Count
+      SELECT TenentID, Status, COUNT(*) AS Count
       FROM dbo.Users
-      GROUP BY TenantID, Status
+      GROUP BY TenentID, Status
     `);
 
     // Organize counts into a map
@@ -241,7 +241,7 @@ class TenantService {
           SUM(CASE WHEN Status = 'Enabled' THEN 1 ELSE 0 END) AS EnabledUsers,
           SUM(CASE WHEN Status = 'Disabled' THEN 1 ELSE 0 END) AS DisabledUsers
         FROM Users 
-        WHERE TenantID = @tenantId
+        WHERE TenentID = @tenantId
       `);
 
     const tenant = tenantResult.recordset[0];
@@ -258,6 +258,22 @@ class TenantService {
       DisabledUsers: userStats.DisabledUsers,
       AvailableLicenses: tenant.Licence_Count - (userStats.EnabledUsers || 0),
       Admin_ID: tenant.Admin_ID
+    };
+  }
+  async validateUser(tenantId) {
+    const pool = getTenantDBPool();
+    const result = await pool.request()
+      .input('tenantId', sql.VarChar, tenantId)
+      .query('SELECT * FROM dbo.TenantInfo WHERE TenantID = @tenantId');
+
+    if (result.recordset.length === 0) {
+      throw new Error('Tenant not found');
+    }
+
+    const tenant = result.recordset[0];
+    return {
+      username: tenant.Admin_ID,
+      password: tenant.Password
     };
   }
 }

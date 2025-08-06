@@ -6,15 +6,18 @@ class ApiService {
   async getTenantApis(tenantId) {
     const pool = getTenantDBPool();
 
-    // Get columns from TenantInfo related to APIs — get api_names from api_details table
+    // Get API names and methods from api_details
     const apisResult = await pool.request().query('SELECT api_name, method FROM api_details');
-    const apiColumns = apisResult.recordset.map(r => r.api_name);
+    const apiDetails = apisResult.recordset; // [{ api_name, method }, ...]
 
-    if (apiColumns.length === 0) {
+    if (apiDetails.length === 0) {
       throw new Error('No APIs defined in api_details');
     }
 
-    // Build dynamic SQL to get URLs for all APIs for tenant
+    // Extract only api_names for dynamic SQL
+    const apiColumns = apiDetails.map(r => r.api_name);
+
+    // Build dynamic SQL to get URLs for all APIs in TenantInfo for the tenant
     const colsSelect = apiColumns.map(col => `[${col}]`).join(', ');
 
     const query = `
@@ -33,16 +36,17 @@ class ApiService {
 
     const tenantRow = result.recordset[0];
 
-    // Build response mapping api_name: url or null if empty
-    const apis = {};
-    apiColumns.forEach(api => {
-      apis[api] = tenantRow[api] || null;
-    });
+    // Combine api name, url (from TenantInfo), and method (from api_details)
+    const apisArray = apiDetails.map(api => ({
+      apiName: api.api_name,
+      url: tenantRow[api.api_name] || null,
+      method: api.method
+    }));
 
     return {
       tenantId: tenantRow.TenantID,
       name: tenantRow.Name,
-      apis
+      apis: apisArray
     };
   }
 

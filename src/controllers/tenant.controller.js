@@ -106,6 +106,17 @@ class TenantController {
       errorResponse(res, error.message, statusCode);
     }
   }
+  async validateUser(req, res) {
+    try {
+      const tenantId = req.body.TenantID;
+      const tenant = await tenantService.validateUser(tenantId);
+      successResponse(res, tenant, 'Tenant info retrieved successfully');
+    } catch (error) {
+      console.error('Get tenant error:', error);
+      const statusCode = error.message.includes('not found') ? 404 : 500;
+      errorResponse(res, error.message, statusCode);
+    }
+  }
 }
 
 module.exports = new TenantController();

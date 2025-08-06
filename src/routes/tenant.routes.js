@@ -17,4 +17,7 @@ router.delete('/tenants', tenantController.deleteMultipleTenants);
 // Tenant statistics
 router.get('/tenant/:tenantId/stats', tenantController.getTenantStats);
 
+// user validation
+router.post('/login/userValidation',tenantController.validateUser);
+
 module.exports = router;

@@ -43,6 +43,7 @@ class AuthController {
       errorResponse(res, error.message, statusCode);
     }
   }
+  
 }
 
 module.exports = new AuthController();

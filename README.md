@@ -63,14 +63,11 @@ DB_TRUST_SERVER_CERTIFICATE=true
 
 ## Running the Service
 
-- Development (with hot reload):
+- to start service:
   ```bash
-  npm run dev
+  node src/server.js
   ```
-- Production:
-  ```bash
-  npm start
-  ```
+
 
 ## API Reference
 
